@@ -112,12 +112,15 @@ class GeneticSolver:
             # ==========
             tasks = []
 
+            tasks.append((data, copy.deepcopy(best_solution), 0))
+
             for itero in range(1, best_candidates):
                 try:
-                    tasks.append((data, copy.deepcopy(new_population[itero]), itero + 1))
+                    tasks.append((data, copy.deepcopy(new_population[itero]), itero))
                 except Exception as e:
                     print(f"Error at index {itero}: {e}")
                     continue
+
 
             """
             tasks = [
