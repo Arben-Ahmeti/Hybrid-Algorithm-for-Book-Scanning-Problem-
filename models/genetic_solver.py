@@ -51,7 +51,9 @@ class GeneticSolver:
         self.steady_gen_start = int(self.generations * (1 - steady_state_ratio))
         self.steady_time_start = self.time_limit_sec * (1 - steady_state_ratio)
 
-    def solve(self):
+    def solve(self,
+        best_candidates = 24
+              ):
         # Initialize population with slight variations of initial solution
         population = self.initialize_population(self.initial_solution)
 
@@ -108,7 +110,16 @@ class GeneticSolver:
             if best_solution.fitness_score > min(new_population, key=lambda x: x.fitness_score).fitness_score:
                 new_population[-1] = best_solution
             # ==========
+            tasks = []
 
+            for itero in range(1, best_candidates):
+                try:
+                    tasks.append((data, copy.deepcopy(new_population[itero]), itero + 1))
+                except Exception as e:
+                    print(f"Error at index {itero}: {e}")
+                    continue
+
+            """
             tasks = [
                 (data, copy.deepcopy(best_solution), 0),  # solver1 task
                 (data, copy.deepcopy(new_population[0]), 1),  # solver2 task
@@ -117,9 +128,10 @@ class GeneticSolver:
                 (data, copy.deepcopy(new_population[3]), 4),  # solver5 task
                 (data, copy.deepcopy(new_population[4]), 5)  # solver6 task
             ]
+            """
 
-            # Execute all three in parallel
-            with ProcessPoolExecutor(max_workers=6) as executor:
+            # Execute all in parallel
+            with ProcessPoolExecutor(max_workers=best_candidates) as executor:
                 results = list(executor.map(ils_worker, tasks))
 
             # Process results and find the best
