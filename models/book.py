@@ -1,9 +1,8 @@
 class Book:
-    id = 0
-    score = 0
+    __slots__ = ('id', 'score')
 
     def __init__(self, id, score):
-        self.id = id    
+        self.id = id
         self.score = score
 
     def __repr__(self):
