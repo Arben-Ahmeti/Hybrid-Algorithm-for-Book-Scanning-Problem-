@@ -146,6 +146,8 @@ Named parameter sets are defined in `parameter_sets.py`. Each set has three laye
 - `ga`: population, generation, crossover, mutation, selection, and GA operator weights.
 - `improvement`: ILS acceptance, restart, perturbation, local-search, and constructor parameters.
 
+The GA and ILS operator pools both include the conditional uniform-instance operators `coverage_exchange` and `paired_choice_flip`. They are not part of the GA tuning config, are automatically disabled on non-uniform instances, and use the same ILS implementation and instance-adjusted weighting in local refinement. Bulk offspring mutation skips them so regular generation progress is not blocked.
+
 ```bash
 python app.py --parameter-set default --input input/google_hashcode/e_so_many_books.txt
 python app.py --parameter-set ga_with_parallel_ils --input input/google_hashcode/e_so_many_books.txt
@@ -157,6 +159,7 @@ Common tunables:
 
 - `--time-limit`: search budget after initial construction.
 - `--init-max-time`: construction budget for the initial GA seed pool.
+- `--seed`: defaults to `54`, matching the ILS experiments.
 - `--hybrid-mode`: `ga_with_parallel_ils`, `ga_with_ils`, or `ga_then_ils`.
 - `--ils-workers`: parallel ILS worker count in `ga_with_parallel_ils` mode.
 - `--ils-candidates`: number of elite GA candidates sent to ILS.

@@ -5,9 +5,11 @@ from typing import Dict, Sequence, Tuple
 from models.instance_data import InstanceData
 from models.selection_strategies import SelectionStrategies
 from models.solution import Solution
+from models.tweaks import Tweaks
 
 
 class GeneticSolver:
+    STRUCTURED_OPERATOR_LABELS = {"coverage_exchange", "paired_choice_flip"}
     ORDER_OPERATOR_WEIGHTS = [
         ("swap_signed_with_unsigned", 2.4),
         ("sampled_best_exchange", 2.2),
@@ -20,6 +22,8 @@ class GeneticSolver:
         ("swap_signed", 0.8),
         ("insert_library", 0.8),
         ("swap_neighbor_libraries", 0.5),
+        ("coverage_exchange", 0.2),
+        ("paired_choice_flip", 0.1),
     ]
 
     def __init__(
@@ -80,6 +84,10 @@ class GeneticSolver:
         self.local_screen_attempts = max(0, int(local_screen_attempts))
         self.local_exact_checks = max(1, int(local_exact_checks))
         self.operator_weights = self._build_operator_weights(operator_weights)
+        self.structured_refine_active = any(
+            label in self.STRUCTURED_OPERATOR_LABELS
+            for label, _weight in self.operator_weights
+        )
         self.selection_weights = selection_weights
         self.embedded_improvement_callback = embedded_improvement_callback
         self.embedded_improvement_batch_callback = embedded_improvement_batch_callback
@@ -134,6 +142,10 @@ class GeneticSolver:
 
             population = sorted(population, key=lambda x: x.fitness_score, reverse=True)
             best_solution = population[0]
+
+            if self.structured_refine_active and self.local_refine_steps > 0:
+                population = self._refine_structured_elites(population, deadline)
+                best_solution = population[0]
 
             if (
                 self.local_refine_steps > 0
@@ -266,6 +278,7 @@ class GeneticSolver:
             candidate = self.mutate_solution(
                 base,
                 iterations=1,
+                allow_structured=False,
             )
             self._append_unique(population, candidate, seen)
 
@@ -277,6 +290,7 @@ class GeneticSolver:
                     self.mutate_solution(
                         random.choice(seeds),
                         iterations=1,
+                        allow_structured=False,
                     )
                 )
 
@@ -293,6 +307,7 @@ class GeneticSolver:
                 self.mutate_solution(
                     base,
                     iterations=random.randint(1, max(1, min(4, self.mutation_steps + 1))),
+                    allow_structured=False,
                 )
             )
         return immigrants
@@ -320,21 +335,26 @@ class GeneticSolver:
             offspring1 = self.mutate_solution(
                 offspring1,
                 iterations=max(1, min(3, self.mutation_steps)),
+                allow_structured=False,
             )
         if random.random() < self.mutation_prob:
             offspring2 = self.mutate_solution(
                 offspring2,
                 iterations=max(1, min(3, self.mutation_steps)),
+                allow_structured=False,
             )
 
         return offspring1, offspring2
 
-    def mutate_solution(self, solution, iterations=1):
+    def mutate_solution(self, solution, iterations=1, allow_structured=True):
         current = solution.shallow_copy()
         best = current.shallow_copy()
 
         for _ in range(max(1, iterations)):
-            candidate, operator_label = self._best_screened_neighbor(current)
+            candidate, operator_label = self._best_screened_neighbor(
+                current,
+                allow_structured=allow_structured,
+            )
             if candidate is None:
                 continue
 
@@ -355,7 +375,13 @@ class GeneticSolver:
             return best
         return current
 
-    def _best_screened_neighbor(self, solution, attempts=None, exact_checks=2):
+    def _best_screened_neighbor(
+        self,
+        solution,
+        attempts=None,
+        exact_checks=2,
+        allow_structured=True,
+    ):
         attempts = attempts or self.mutation_screen_attempts or max(8, self.mutation_steps * 2)
         exact_checks = max(1, exact_checks or self.mutation_exact_checks)
         base_order = solution.ordered_libraries()
@@ -364,9 +390,13 @@ class GeneticSolver:
         seen = set()
 
         for _ in range(attempts):
-            operator_label, order = self._candidate_order(solution)
+            operator_label, order = self._candidate_order(
+                solution,
+                allow_structured=allow_structured,
+            )
             if order is None:
                 continue
+            is_structured = operator_label in self.STRUCTURED_OPERATOR_LABELS
             key = tuple(order[: min(len(order), 80)])
             if key in seen:
                 continue
@@ -374,20 +404,23 @@ class GeneticSolver:
 
             proxy_score = self._screen_score(order)
             if (
+                is_structured or
                 proxy_score >= base_proxy
                 or len(scored_orders) < exact_checks
                 or random.random() < 0.08
             ):
                 self.operator_stats[operator_label]["screened"] += 1
-                scored_orders.append((proxy_score, operator_label, order))
+                scored_orders.append(
+                    (1 if is_structured else 0, proxy_score, operator_label, order)
+                )
 
         if not scored_orders:
             return None, None
 
-        scored_orders.sort(key=lambda item: item[0], reverse=True)
+        scored_orders.sort(key=lambda item: (item[0], item[1]), reverse=True)
         best_candidate = None
         best_label = None
-        for _proxy_score, operator_label, order in scored_orders[:exact_checks]:
+        for _priority, _proxy_score, operator_label, order in scored_orders[:exact_checks]:
             self.operator_stats[operator_label]["exact"] += 1
             candidate = Solution.from_order(order, self.instance)
             if candidate.fitness_score > solution.fitness_score:
@@ -422,6 +455,45 @@ class GeneticSolver:
                 current = candidate
             refined[idx] = current
 
+        return sorted(refined, key=lambda x: x.fitness_score, reverse=True)
+
+    def _refine_structured_elites(self, population, deadline):
+        refined = sorted(population, key=lambda x: x.fitness_score, reverse=True)
+        if not refined:
+            return refined
+
+        current = refined[0]
+        structured_pool = [
+            (label, weight)
+            for label, weight in self.operator_weights
+            if label in self.STRUCTURED_OPERATOR_LABELS
+        ]
+        structured_pool.sort(key=lambda item: item[1], reverse=True)
+
+        for label, _weight in structured_pool:
+            if time.time() >= deadline:
+                break
+            self.operator_stats[label]["attempts"] += 1
+            if label == "coverage_exchange":
+                order = Tweaks._order_coverage_exchange(current, self.instance)
+            elif label == "paired_choice_flip":
+                order = Tweaks._order_paired_choice_flip(current, self.instance)
+            else:
+                order = None
+
+            if order is None:
+                continue
+
+            self.operator_stats[label]["produced"] += 1
+            self.operator_stats[label]["exact"] += 1
+            candidate = Solution.from_order(order, self.instance)
+            if candidate.fitness_score > current.fitness_score:
+                self.operator_stats[label]["improved"] += 1
+                self.operator_stats[label]["accepted"] += 1
+                self.operator_stats[label]["best_updates"] += 1
+                current = candidate
+
+        refined[0] = current
         return sorted(refined, key=lambda x: x.fitness_score, reverse=True)
 
     def _should_run_embedded_improvement(self, generation, deadline):
@@ -557,8 +629,17 @@ class GeneticSolver:
             return primary_parent.shallow_copy()
         return child
 
-    def _candidate_order(self, solution):
-        labels, weights = zip(*self.operator_weights)
+    def _candidate_order(self, solution, allow_structured=True):
+        operator_pool = self.operator_weights
+        if not allow_structured:
+            regular_pool = [
+                item
+                for item in self.operator_weights
+                if item[0] not in self.STRUCTURED_OPERATOR_LABELS
+            ]
+            if regular_pool:
+                operator_pool = regular_pool
+        labels, weights = zip(*operator_pool)
         label = random.choices(labels, weights=weights, k=1)[0]
         self.operator_stats[label]["attempts"] += 1
 
@@ -584,6 +665,10 @@ class GeneticSolver:
             order = self._order_diversity_swap(solution)
         elif label == "sampled_best_exchange":
             order = self._order_sampled_best_exchange(solution)
+        elif label == "coverage_exchange":
+            order = Tweaks._order_coverage_exchange(solution, self.instance)
+        elif label == "paired_choice_flip":
+            order = Tweaks._order_paired_choice_flip(solution, self.instance)
         else:
             order = None
 
@@ -925,14 +1010,32 @@ class GeneticSolver:
 
     def _build_operator_weights(self, operator_weights):
         provided = operator_weights or {}
-        weights = []
+        raw_weights = {}
         for label, default_weight in self.ORDER_OPERATOR_WEIGHTS:
-            weight = float(provided.get(label, default_weight))
-            if weight > 0:
-                weights.append((label, weight))
+            if label in self.STRUCTURED_OPERATOR_LABELS:
+                weight = default_weight
+            else:
+                weight = float(provided.get(label, default_weight))
+            raw_weights[label] = max(0.0, weight)
+
+        adjusted_weights = Tweaks.instance_adjusted_weights(raw_weights, self.instance)
+        weights = [
+            (label, adjusted_weights.get(label, 0.0))
+            for label, _default_weight in self.ORDER_OPERATOR_WEIGHTS
+            if adjusted_weights.get(label, 0.0) > 0
+        ]
         if weights:
             return weights
-        return list(self.ORDER_OPERATOR_WEIGHTS)
+
+        fallback = Tweaks.instance_adjusted_weights(
+            dict(self.ORDER_OPERATOR_WEIGHTS),
+            self.instance,
+        )
+        return [
+            (label, fallback.get(label, default_weight))
+            for label, default_weight in self.ORDER_OPERATOR_WEIGHTS
+            if fallback.get(label, default_weight) > 0
+        ]
 
     @staticmethod
     def _clamp_probability(value):

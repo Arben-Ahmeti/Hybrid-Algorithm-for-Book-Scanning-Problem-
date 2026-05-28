@@ -11,6 +11,9 @@ from models.solution import Solution
 from parameter_sets import DEFAULT_PARAMETER_SET_NAME, available_parameter_sets, get_parameter_set
 
 
+DEFAULT_RANDOM_SEED = 54
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Hybrid solver for Google Hash Code 2020 Book Scanning instances."
@@ -36,7 +39,7 @@ def parse_args():
         ),
     )
     parser.add_argument("--ga-ratio", type=float)
-    parser.add_argument("--seed", type=int)
+    parser.add_argument("--seed", type=int, default=DEFAULT_RANDOM_SEED)
     parser.add_argument("--seed-solution", action="append", default=[])
     parser.add_argument(
         "--seed-only",

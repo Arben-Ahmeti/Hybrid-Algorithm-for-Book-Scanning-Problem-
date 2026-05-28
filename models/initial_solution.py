@@ -6,23 +6,26 @@ from models.solution import Solution
 
 
 class InitialSolution:
+    DEFAULT_ALPHAS = [0.4, 0.5, 0.75, 1.0, 1.5, 2.0]
+    DEFAULT_GRASP_RCL = 0.1308
+
     @staticmethod
     def generate_initial_solution(
         data,
         max_time=120.0,
         alphas=None,
         beta=0.12,
-        grasp_rcl=0.05,
+        grasp_rcl=DEFAULT_GRASP_RCL,
         grasp_max_time=5.0,
         verbose=True,
-        refine_count=8,
+        refine_count=3,
     ):
         if hasattr(data, "to_flat_arrays"):
             from models.evaluation import warmup_jit
 
             warmup_jit(data.to_flat_arrays())
         start_time = time.time()
-        alphas = alphas or [0.5, 1.0, 1.5, 2.0]
+        alphas = alphas or InitialSolution.DEFAULT_ALPHAS
         screened_candidates = []
 
         if verbose:
@@ -88,10 +91,10 @@ class InitialSolution:
         max_time=120.0,
         alphas=None,
         beta=0.12,
-        grasp_rcl=0.05,
+        grasp_rcl=DEFAULT_GRASP_RCL,
         grasp_max_time=5.0,
         verbose=True,
-        refine_count=8,
+        refine_count=3,
     ):
         _best_solution, candidates = InitialSolution.generate_initial_solution(
             data,
@@ -107,7 +110,7 @@ class InitialSolution:
 
     @staticmethod
     def generate_adaptive_restart_solution(data, alphas=None):
-        alphas = alphas or [0.5, 1.0, 1.5, 2.0]
+        alphas = alphas or InitialSolution.DEFAULT_ALPHAS
         alpha = random.choice(alphas)
         noise = random.uniform(0.03, 0.10)
         if random.random() < 0.25:
