@@ -70,6 +70,7 @@ GA_PARAM_KEYS = {
     "local_exact_checks",
     "operator_weights",
     "selection_weights",
+    "selection_tournament_size",
 }
 
 

@@ -106,6 +106,7 @@ def add_ga_args(parser):
     group.add_argument("--local-refine-steps", type=int)
     group.add_argument("--elite-refine-interval", type=int)
     group.add_argument("--elite-refine-count", type=int)
+    group.add_argument("--selection-tournament-size", type=int)
 
 
 def add_improvement_args(parser):
@@ -374,6 +375,7 @@ def apply_cli_overrides(config, args):
         "local_refine_steps": "local_refine_steps",
         "elite_refine_interval": "elite_refine_interval",
         "elite_refine_count": "elite_refine_count",
+        "selection_tournament_size": "selection_tournament_size",
     }.items():
         override_if_set(ga, key, getattr(args, cli_name))
 

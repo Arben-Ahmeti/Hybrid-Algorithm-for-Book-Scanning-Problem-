@@ -9,11 +9,15 @@ class SelectionStrategies:
     }
 
     @staticmethod
-    def get_selection_methods(selection_weights=None):
+    def get_selection_methods(selection_weights=None, tournament_size=10):
         selection_weights = selection_weights or {}
+        tournament_size = max(1, int(tournament_size))
         return [
             (
-                SelectionStrategies.tournament_selection,
+                lambda population: SelectionStrategies.tournament_selection(
+                    population,
+                    k=tournament_size,
+                ),
                 max(0.0, selection_weights.get('tournament', SelectionStrategies.WEIGHTS['tournament'])),
             ),
             (
@@ -27,8 +31,13 @@ class SelectionStrategies:
         ]
 
     @staticmethod
-    def choose_selection_method(selection_weights=None):
-        methods, weights = zip(*SelectionStrategies.get_selection_methods(selection_weights))
+    def choose_selection_method(selection_weights=None, tournament_size=10):
+        methods, weights = zip(
+            *SelectionStrategies.get_selection_methods(
+                selection_weights,
+                tournament_size,
+            )
+        )
         if sum(weights) <= 0.0:
             weights = (
                 SelectionStrategies.WEIGHTS['tournament'],

@@ -32,6 +32,7 @@ DEFAULT_GA_PARAMS = {
         "roulette": 2.0,
         "rank": 1.0,
     },
+    "selection_tournament_size": 10,
     "operator_weights": {
         "swap_signed_with_unsigned": 2.4,
         "sampled_best_exchange": 2.2,

@@ -29,20 +29,30 @@ class Solution:
         solution.rebuild_from_order(order, data)
         return solution
 
-    def clone(self):
+    def clone(self, copy_scan_data=True):
+        if copy_scan_data:
+            scanned_books_per_library = {
+                k: v.copy()
+                for k, v in self.scanned_books_per_library.items()
+            }
+            scanned_books = self.scanned_books.copy()
+        else:
+            scanned_books_per_library = self.scanned_books_per_library
+            scanned_books = self.scanned_books
+
         s = Solution(
             self.signed_libraries.copy(),
             self.unsigned_libraries.copy(),
-            {k: v.copy() for k, v in self.scanned_books_per_library.items()},
-            self.scanned_books.copy(),
+            scanned_books_per_library,
+            scanned_books,
             self.fitness_score,
         )
         s.initial_score = self.initial_score
         s.upper_bound = self.upper_bound
         return s
 
-    def shallow_copy(self):
-        return self.clone()
+    def shallow_copy(self, copy_scan_data=True):
+        return self.clone(copy_scan_data=copy_scan_data)
 
     def ordered_libraries(self):
         return self.signed_libraries + self.unsigned_libraries

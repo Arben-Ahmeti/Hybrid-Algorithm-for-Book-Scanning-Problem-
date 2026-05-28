@@ -51,6 +51,7 @@ class GeneticSolver:
         local_exact_checks=4,
         operator_weights: Dict[str, float] = None,
         selection_weights: Dict[str, float] = None,
+        selection_tournament_size=10,
         embedded_improvement_callback=None,
         embedded_improvement_batch_callback=None,
         embedded_improvement_interval=0,
@@ -89,6 +90,7 @@ class GeneticSolver:
             for label, _weight in self.operator_weights
         )
         self.selection_weights = selection_weights
+        self.selection_tournament_size = max(1, int(selection_tournament_size))
         self.embedded_improvement_callback = embedded_improvement_callback
         self.embedded_improvement_batch_callback = embedded_improvement_batch_callback
         self.embedded_improvement_interval = max(0, int(embedded_improvement_interval))
@@ -109,6 +111,9 @@ class GeneticSolver:
             "applied": 0,
             "skipped": 0,
             "children_built": 0,
+            "children_accepted": 0,
+            "proxy_worse": 0,
+            "exact_fallbacks": 0,
             "parent_fallbacks": 0,
         }
         self.embedded_improvement_stats = {
@@ -209,7 +214,7 @@ class GeneticSolver:
 
             new_population = sorted(new_population, key=lambda x: x.fitness_score, reverse=True)
             if best_solution.fitness_score > new_population[-1].fitness_score:
-                new_population[-1] = best_solution.shallow_copy()
+                new_population[-1] = self._copy_solution(best_solution)
 
             population = sorted(
                 new_population,
@@ -224,7 +229,7 @@ class GeneticSolver:
         return result
 
     def create_offspring_generative(self, population, deadline=None):
-        new_population = [population[0].shallow_copy()]
+        new_population = [self._copy_solution(population[0])]
 
         while len(new_population) < self.population_size:
             if deadline is not None and time.time() >= deadline:
@@ -234,11 +239,11 @@ class GeneticSolver:
             new_population.extend([offspring1, offspring2])
 
         while len(new_population) < self.population_size:
-            new_population.append(random.choice(population).shallow_copy())
+            new_population.append(self._copy_solution(random.choice(population)))
         return new_population[:self.population_size]
 
     def create_offspring_steady_state(self, population, deadline=None):
-        new_population = [individual.shallow_copy() for individual in population]
+        new_population = [self._copy_solution(individual) for individual in population]
         offspring_budget = max(
             2,
             int(self.population_size * self.steady_state_offspring_factor),
@@ -267,7 +272,7 @@ class GeneticSolver:
         for seed in seeds:
             if len(population) >= self.population_size:
                 break
-            self._append_unique(population, seed.shallow_copy(), seen)
+            self._append_unique(population, self._copy_solution(seed), seen)
 
         mutated_budget = min(
             int(self.population_size * tweak_ratio),
@@ -284,7 +289,7 @@ class GeneticSolver:
 
         while len(population) < self.population_size:
             if random.random() < 0.65:
-                population.append(random.choice(seeds).shallow_copy())
+                population.append(self._copy_solution(random.choice(seeds)))
             else:
                 population.append(
                     self.mutate_solution(
@@ -313,9 +318,21 @@ class GeneticSolver:
         return immigrants
 
     def _select_parents(self, population):
-        selection_method = SelectionStrategies.choose_selection_method(self.selection_weights)
+        selection_method = SelectionStrategies.choose_selection_method(
+            self.selection_weights,
+            self.selection_tournament_size,
+        )
         parent1 = selection_method(population)
         parent2 = selection_method(population)
+        if len(population) > 1:
+            for _ in range(3):
+                if parent2 is not parent1:
+                    break
+                parent2 = selection_method(population)
+            if parent2 is parent1:
+                alternatives = [individual for individual in population if individual is not parent1]
+                if alternatives:
+                    parent2 = random.choice(alternatives)
         return parent1, parent2
 
     def _make_children(self, parent1, parent2, deadline=None):
@@ -325,8 +342,8 @@ class GeneticSolver:
             offspring1, offspring2 = self.crossover(parent1, parent2)
         else:
             self.crossover_stats["skipped"] += 1
-            offspring1 = parent1.shallow_copy()
-            offspring2 = parent2.shallow_copy()
+            offspring1 = self._copy_solution(parent1)
+            offspring2 = self._copy_solution(parent2)
 
         if deadline is not None and time.time() >= deadline:
             return offspring1, offspring2
@@ -334,21 +351,21 @@ class GeneticSolver:
         if random.random() < self.mutation_prob:
             offspring1 = self.mutate_solution(
                 offspring1,
-                iterations=max(1, min(3, self.mutation_steps)),
+                iterations=self.mutation_steps,
                 allow_structured=False,
             )
         if random.random() < self.mutation_prob:
             offspring2 = self.mutate_solution(
                 offspring2,
-                iterations=max(1, min(3, self.mutation_steps)),
+                iterations=self.mutation_steps,
                 allow_structured=False,
             )
 
         return offspring1, offspring2
 
     def mutate_solution(self, solution, iterations=1, allow_structured=True):
-        current = solution.shallow_copy()
-        best = current.shallow_copy()
+        current = self._copy_solution(solution)
+        best = self._copy_solution(current)
 
         for _ in range(max(1, iterations)):
             candidate, operator_label = self._best_screened_neighbor(
@@ -359,7 +376,7 @@ class GeneticSolver:
                 continue
 
             if candidate.fitness_score > best.fitness_score:
-                best = candidate.shallow_copy()
+                best = self._copy_solution(candidate)
                 if operator_label is not None:
                     self.operator_stats[operator_label]["best_updates"] += 1
 
@@ -599,7 +616,7 @@ class GeneticSolver:
         order2 = self._normalise_order(parent2.ordered_libraries())
 
         if len(order1) < 2 or len(order2) < 2:
-            return parent1.shallow_copy(), parent2.shallow_copy()
+            return self._copy_solution(parent1), self._copy_solution(parent2)
 
         child1_order = self._order_crossover(order1, order2)
         child2_order = self._order_crossover(order2, order1)
@@ -615,9 +632,8 @@ class GeneticSolver:
         )
         child_proxy = self._screen_score(order)
 
-        if child_proxy < parent_proxy and random.random() > 0.12:
-            self.crossover_stats["parent_fallbacks"] += 1
-            return primary_parent.shallow_copy()
+        if child_proxy < parent_proxy:
+            self.crossover_stats["proxy_worse"] += 1
 
         child = Solution.from_order(order, self.instance)
         self.crossover_stats["children_built"] += 1
@@ -625,8 +641,10 @@ class GeneticSolver:
             child.fitness_score < primary_parent.fitness_score
             and random.random() > self.mutation_accept_worse_prob
         ):
+            self.crossover_stats["exact_fallbacks"] += 1
             self.crossover_stats["parent_fallbacks"] += 1
-            return primary_parent.shallow_copy()
+            return self._copy_solution(primary_parent)
+        self.crossover_stats["children_accepted"] += 1
         return child
 
     def _candidate_order(self, solution, allow_structured=True):
@@ -977,6 +995,7 @@ class GeneticSolver:
                 "local_exact_checks": self.local_exact_checks,
                 "operator_weights": dict(self.operator_weights),
                 "selection_weights": self.selection_weights,
+                "selection_tournament_size": self.selection_tournament_size,
                 "embedded_improvement_interval": self.embedded_improvement_interval,
                 "embedded_improvement_count": self.embedded_improvement_count,
                 "embedded_improvement_min_remaining": self.embedded_improvement_min_remaining,
@@ -1040,6 +1059,10 @@ class GeneticSolver:
     @staticmethod
     def _clamp_probability(value):
         return min(1.0, max(0.0, float(value)))
+
+    @staticmethod
+    def _copy_solution(solution):
+        return solution.shallow_copy(copy_scan_data=False)
 
     def _prepare_seed_solutions(self, seed_solutions):
         seeds = []
