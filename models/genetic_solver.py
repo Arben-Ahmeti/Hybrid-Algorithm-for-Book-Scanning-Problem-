@@ -17,8 +17,8 @@ def ils_worker(args):
     print(f"[Worker {worker_id}] Original fitness: {original_fitness}")
     result = solver.iterated_local_search(
         data,
-        solution,
-        time_limit=10,
+        starting_solution=solution,  # Pass solution correctly
+        time_limit=2,
         max_iterations=1000
     )
     new_fitness = result.fitness_score
@@ -28,6 +28,7 @@ class GeneticSolver:
     def __init__(self,
                  initial_solution: Solution,
                  instance: InstanceData,
+                 original_instance=None,        # ADD THIS PARAMETER
                  population_size=100,
                  generations=500,
                  mutation_prob=0.39,
@@ -39,6 +40,7 @@ class GeneticSolver:
                  ):
         self.initial_solution = initial_solution
         self.instance = instance
+        self.original_instance = original_instance  # ADD THIS LINE
         self.population_size = population_size
         self.generations = generations
         self.population = []
@@ -51,9 +53,9 @@ class GeneticSolver:
         self.steady_gen_start = int(self.generations * (1 - steady_state_ratio))
         self.steady_time_start = self.time_limit_sec * (1 - steady_state_ratio)
 
-    def solve(self,
-        best_candidates = 24
-              ):
+    def solve(self, best_candidates=12):
+        print("🚀 Starting solve method")
+
         # Initialize population with slight variations of initial solution
         population = self.initialize_population(self.initial_solution)
 
@@ -63,19 +65,30 @@ class GeneticSolver:
         plateau_counter = 0
         base_immigrant_frac = self.immigrant_frac
 
-        #-bb
-        data = copy.deepcopy(self.instance)
+        # # Convert adapter to simple dict for multiprocessing (instead of deepcopy)
+        # instance_data = {
+        #     'num_libs': self.instance.num_libs,
+        #     'num_days': self.instance.num_days,
+        #     'lib_signup_days': self.instance.lib_signup_days,
+        #     'lib_books_per_day': self.instance.lib_books_per_day,
+        #     'lib_book_ids': self.instance.lib_book_ids,
+        #     'scores': list(self.instance.scores)
+        # }
+        if self.original_instance is not None:
+            ils_instance = self.original_instance  # Has lib_num_books etc.
+        else:
+            ils_instance = self.instance  # Fallback to adapter
 
         for generation in range(self.generations):
             elapsed = time.time() - start_time
             if elapsed >= self.time_limit_sec:
-                # print(f"Stopping at gen {generation} due to time limit ({elapsed:.1f}s)")
+                print(f"Stopping at gen {generation} due to time limit ({elapsed:.1f}s)")
                 break
 
             # Evaluate population
             population = sorted(population, key=lambda x: x.fitness_score, reverse=True)
             best_solution = population[0]
-            # print(f"Gen {generation}: Best fitness = {best_solution.fitness_score}")
+            print(f"Gen {generation}: Best fitness = {best_solution.fitness_score}")
 
             # Plateau tracking
             if best_fitness is None or best_solution.fitness_score > best_fitness:
@@ -109,55 +122,52 @@ class GeneticSolver:
             # Ensure best solution is not lost
             if best_solution.fitness_score > min(new_population, key=lambda x: x.fitness_score).fitness_score:
                 new_population[-1] = best_solution
-            # ==========
-            tasks = []
 
-            tasks.append((data, copy.deepcopy(best_solution), 0))
+            # ILS Enhancement (only run occasionally to avoid overhead)
+            if generation % 10 == 0:  # Run every 10 generations
+                print(f"Running ILS enhancement at generation {generation}")
 
-            for itero in range(1, best_candidates):
-                try:
-                    tasks.append((data, copy.deepcopy(new_population[itero]), itero))
-                except Exception as e:
-                    print(f"Error at index {itero}: {e}")
-                    continue
+                # Create tasks for parallel execution
+                tasks = []
+                for itero in range(1, min(best_candidates, len(new_population))):
+                    try:
+                        # CHANGED: use ils_instance instead of instance_data dict
+                        tasks.append((
+                            ils_instance,  # <-- CHANGED
+                            copy.deepcopy(new_population[itero]),
+                            itero + 1
+                        ))
+                    except Exception as e:
+                        print(f"Error at index {itero}: {e}")
+                        continue
 
+                # Execute all in parallel
+                if tasks:  # Only run if we have tasks
+                    try:
+                        with ProcessPoolExecutor(max_workers=min(len(tasks), 4)) as executor:
+                            results = list(executor.map(ils_worker, tasks))
 
-            """
-            tasks = [
-                (data, copy.deepcopy(best_solution), 0),  # solver1 task
-                (data, copy.deepcopy(new_population[0]), 1),  # solver2 task
-                (data, copy.deepcopy(new_population[1]), 2),  # solver3 task
-                (data, copy.deepcopy(new_population[2]), 3),  # solver4 task
-                (data, copy.deepcopy(new_population[3]), 4),  # solver5 task
-                (data, copy.deepcopy(new_population[4]), 5)  # solver6 task
-            ]
-            """
+                        best_improvement = -float('inf')
+                        best_solution_found = None
 
-            # Execute all in parallel
-            with ProcessPoolExecutor(max_workers=best_candidates) as executor:
-                results = list(executor.map(ils_worker, tasks))
+                        for original_fitness, new_fitness, solution, worker_id in results:
+                            if original_fitness < new_fitness:
+                                print(f"Improvement found - Worker {worker_id}")
+                                if new_fitness > best_improvement:
+                                    best_improvement = new_fitness
+                                    best_solution_found = solution
 
-            # Process results and find the best
-            best_improvement = -float('inf')
-            best_solution_found = None
+                        if best_solution_found is not None:
+                            best_solution = best_solution_found
+                            new_population[0] = best_solution_found
 
-            for original_fitness, new_fitness, solution, worker_id in results:
-                if original_fitness < new_fitness:
-                    print(f"Yeahh, u gjet - Worker {worker_id}")
+                    except Exception as e:
+                        print(f"ILS parallel execution failed: {e}")
 
-                    if new_fitness > best_improvement:
-                        best_improvement = new_fitness
-                        best_solution_found = solution
-
-            # Update if improvement found
-            if best_solution_found is not None:
-                best_solution = best_solution_found
-                new_population[-1] = best_solution_found
-
-          #===============
             # Update population
             population = new_population[:self.population_size]
 
+        print("🏁 Genetic algorithm completed")
         return max(population, key=lambda x: x.fitness_score)
 
     def create_offspring_generative(self, population):
@@ -170,9 +180,9 @@ class GeneticSolver:
             offspring1, offspring2 = self.crossover(parent1, parent2)
 
             if random.random() < self.mutation_prob:
-                offspring1 = Tweaks.tweak_with_iterations(offspring1, self.instance, iterations=self.tweak_steps)
+                offspring1 = Tweaks.tweak_solution_move_signed(offspring1, self.instance)#, iterations=self.tweak_steps)
             if random.random() < self.mutation_prob:
-                offspring2 = Tweaks.tweak_with_iterations(offspring2, self.instance, iterations=self.tweak_steps)
+                offspring2 = Tweaks.tweak_solution_move_signed(offspring2, self.instance)#, iterations=self.tweak_steps)
 
             new_population.extend([offspring1.shallow_copy(), offspring2.shallow_copy()])
 
@@ -190,9 +200,9 @@ class GeneticSolver:
             offspring1, offspring2 = self.crossover(parent1, parent2)
 
             if random.random() < self.mutation_prob:
-                offspring1 = Tweaks.tweak_with_iterations(offspring1, self.instance, iterations=self.tweak_steps)
+                offspring1 = Tweaks.tweak_solution_move_signed(offspring1, self.instance)#, iterations=self.tweak_steps)
             if random.random() < self.mutation_prob:
-                offspring2 = Tweaks.tweak_with_iterations(offspring2, self.instance, iterations=self.tweak_steps)
+                offspring2 = Tweaks.tweak_solution_move_signed(offspring2, self.instance)#, iterations=self.tweak_steps)
 
             # Combine the population with offspring and select the best ones
             combined = population + [offspring1.shallow_copy(), offspring2.shallow_copy()]
@@ -208,10 +218,10 @@ class GeneticSolver:
 
         # Add tweaked solutions
         for _ in range(num_tweaked):
-            tweaked = Tweaks.tweak_with_iterations(
+            tweaked = Tweaks.tweak_solution_move_signed(
                 initial_solution,
-                self.instance,
-                iterations=random.randint(1, self.tweak_steps)
+                self.instance
+                #iterations=random.randint(1, self.tweak_steps)
             )
             population.append(tweaked.shallow_copy())
 
@@ -284,15 +294,17 @@ class GeneticSolver:
 
                 current_day = 0
                 for lib in signed_libs:
-                    lib_data = self.instance.libs[lib]
-                    if current_day + lib_data.signup_days > self.instance.num_days:
+                    # Use adapter methods instead of direct access
+                    if current_day + self.instance.lib_signup_days[lib] > self.instance.num_days:
                         continue
 
-                    current_day += lib_data.signup_days
+                    current_day += self.instance.lib_signup_days[lib]
                     remaining_days = self.instance.num_days - current_day
-                    max_books = remaining_days * lib_data.books_per_day
+                    max_books = remaining_days * self.instance.lib_books_per_day[lib]
 
-                    available_books = [b.id for b in lib_data.books if b.id not in scanned_books]
+                    # Use adapter's lib_book_ids instead of direct book access
+                    available_books = [book_id for book_id in self.instance.lib_book_ids[lib]
+                                       if book_id not in scanned_books]
                     available_books.sort(key=lambda x: self.instance.scores[x], reverse=True)
                     selected = available_books[:max_books]
 
@@ -314,8 +326,6 @@ class GeneticSolver:
             return (build_solution(offspring1_signed),
                     build_solution(offspring2_signed))
 
-
         except ValueError as e:
             # Fallback to parents if crossover fails
-            # print(f"Crossover failed: {e}, returning parents")
             return parent1, parent2
