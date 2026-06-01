@@ -58,6 +58,9 @@ Run every `.txt` file under `input`, including category folders, and write match
 python app.py --input-dir input --output-dir output --time-limit 600
 ```
 
+During a batch run, a live summary CSV is updated after each instance. By default it is written as
+`<output-dir>/batch_summary_<input-folder>.csv`; use `--summary-csv` to choose a custom path.
+
 Use a separate output folder for a named experiment:
 
 ```bash

@@ -1,4 +1,5 @@
 import argparse
+import csv
 import os
 import random
 import sys
@@ -12,6 +13,57 @@ from parameter_sets import DEFAULT_PARAMETER_SET_NAME, available_parameter_sets,
 
 
 DEFAULT_RANDOM_SEED = 54
+
+
+def compute_gap_to_bound(score, upper_bound):
+    return ((upper_bound - score) / upper_bound * 100) if upper_bound > 0 else 0.0
+
+
+def compute_improvement(initial, final):
+    return ((final - initial) / initial * 100) if initial > 0 else 0.0
+
+
+def write_summary_header(csv_writer):
+    csv_writer.writerow([
+        "instance",
+        "initial_score",
+        "final_score",
+        "upper_bound",
+        "gap_to_bound_pct",
+        "elapsed_s",
+        "running_elapsed_s",
+        "improvement_pct",
+        "running_total_initial",
+        "running_total_final",
+        "running_total_upper_bound",
+        "running_total_gap_to_bound_pct",
+        "running_total_improvement_pct",
+    ])
+
+
+def append_summary_row(csv_writer, file_name, elapsed_s, running_elapsed_s,
+                       initial, final, upper_bound,
+                       total_initial, total_final, total_upper_bound):
+    csv_writer.writerow([
+        file_name,
+        initial,
+        final,
+        upper_bound,
+        f"{compute_gap_to_bound(final, upper_bound):.6f}",
+        f"{elapsed_s:.6f}",
+        f"{running_elapsed_s:.6f}",
+        f"{compute_improvement(initial, final):.6f}",
+        total_initial,
+        total_final,
+        total_upper_bound,
+        f"{compute_gap_to_bound(total_final, total_upper_bound):.6f}",
+        f"{compute_improvement(total_initial, total_final):.6f}",
+    ])
+
+
+def default_summary_csv_path(input_dir, output_dir):
+    input_name = os.path.basename(os.path.normpath(input_dir)) or "batch"
+    return os.path.join(output_dir, f"batch_summary_{input_name}.csv")
 
 
 def parse_args():
@@ -50,6 +102,14 @@ def parse_args():
     parser.add_argument("--grasp-max-time", type=float)
     parser.add_argument("--refine-initial-count", type=int)
     parser.add_argument("--log-dir")
+    parser.add_argument(
+        "--summary-csv",
+        default=None,
+        help=(
+            "Path to batch summary CSV updated after each instance; "
+            "defaults to <output-dir>/batch_summary_<input-folder>.csv"
+        ),
+    )
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--validate", action="store_true")
     parser.add_argument("--no-improvement", action="store_true")
@@ -149,11 +209,49 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
     results = []
-    for input_path in input_files:
-        relative_path = os.path.relpath(input_path, args.input_dir)
-        output_path = os.path.join(args.output_dir, relative_path)
-        result = solve_instance(input_path, output_path, config, args)
-        results.append((relative_path, result.solution.fitness_score))
+    summary_csv = args.summary_csv or default_summary_csv_path(
+        args.input_dir,
+        args.output_dir,
+    )
+    os.makedirs(os.path.dirname(summary_csv) or ".", exist_ok=True)
+    total_initial = 0
+    total_final = 0
+    total_upper_bound = 0
+    running_elapsed = 0.0
+
+    with open(summary_csv, "w", newline="", encoding="utf-8") as summary_file:
+        summary_writer = csv.writer(summary_file)
+        write_summary_header(summary_writer)
+        summary_file.flush()
+
+        for input_path in input_files:
+            relative_path = os.path.relpath(input_path, args.input_dir)
+            output_path = os.path.join(args.output_dir, relative_path)
+            instance_started_at = time.time()
+            result = solve_instance(input_path, output_path, config, args)
+            elapsed_s = time.time() - instance_started_at
+            initial_score = result.initial_solution.fitness_score
+            final_score = result.solution.fitness_score
+            upper_bound = result.solution.upper_bound
+            results.append((relative_path, final_score))
+            total_initial += initial_score
+            total_final += final_score
+            total_upper_bound += upper_bound
+            running_elapsed += elapsed_s
+            append_summary_row(
+                summary_writer,
+                relative_path,
+                elapsed_s,
+                running_elapsed,
+                initial_score,
+                final_score,
+                upper_bound,
+                total_initial,
+                total_final,
+                total_upper_bound,
+            )
+            summary_file.flush()
+            print(f"Updated summary CSV: {summary_csv}")
 
     print_summary(results)
     if args.validate:
@@ -245,6 +343,7 @@ def solve_instance(input_path, output_path, config, args):
         instance_name=os.path.basename(input_path),
         log_dir=args.log_dir,
     )
+    result.solution.upper_bound = instance.calculate_upper_bound()
     result.solution.export(output_path)
 
     elapsed = time.time() - started_at
