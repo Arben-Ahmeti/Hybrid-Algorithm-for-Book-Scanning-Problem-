@@ -9,21 +9,47 @@ class SelectionStrategies:
     }
 
     @staticmethod
-    def get_selection_methods():
+    def get_selection_methods(selection_weights=None, tournament_size=10):
+        selection_weights = selection_weights or {}
+        tournament_size = max(1, int(tournament_size))
         return [
-            (SelectionStrategies.tournament_selection, SelectionStrategies.WEIGHTS['tournament']),
-            (SelectionStrategies.roulette_wheel_selection, SelectionStrategies.WEIGHTS['roulette']),
-            (SelectionStrategies.rank_selection, SelectionStrategies.WEIGHTS['rank']),
+            (
+                lambda population: SelectionStrategies.tournament_selection(
+                    population,
+                    k=tournament_size,
+                ),
+                max(0.0, selection_weights.get('tournament', SelectionStrategies.WEIGHTS['tournament'])),
+            ),
+            (
+                SelectionStrategies.roulette_wheel_selection,
+                max(0.0, selection_weights.get('roulette', SelectionStrategies.WEIGHTS['roulette'])),
+            ),
+            (
+                SelectionStrategies.rank_selection,
+                max(0.0, selection_weights.get('rank', SelectionStrategies.WEIGHTS['rank'])),
+            ),
         ]
 
     @staticmethod
-    def choose_selection_method():
-        methods, weights = zip(*SelectionStrategies.get_selection_methods())
+    def choose_selection_method(selection_weights=None, tournament_size=10):
+        methods, weights = zip(
+            *SelectionStrategies.get_selection_methods(
+                selection_weights,
+                tournament_size,
+            )
+        )
+        if sum(weights) <= 0.0:
+            weights = (
+                SelectionStrategies.WEIGHTS['tournament'],
+                SelectionStrategies.WEIGHTS['roulette'],
+                SelectionStrategies.WEIGHTS['rank'],
+            )
         return random.choices(methods, weights=weights, k=1)[0]
 
     @staticmethod
     def tournament_selection(population, k=10):
         """Select one individual using tournament selection."""
+        k = min(k, len(population))
         tournament = random.sample(population, k)
         return max(tournament, key=lambda ind: ind.fitness_score)
 

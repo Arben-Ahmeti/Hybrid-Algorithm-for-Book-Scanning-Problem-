@@ -1,0 +1,42 @@
+{
+  "crossbreed": true,
+  "include_seeds": false,
+  "mode": "batch",
+  "noise": 0.2,
+  "random_seed": 42,
+  "scales": [
+    0.6,
+    0.75,
+    0.9
+  ],
+  "seed_dir": "seed",
+  "seed_files": [
+    "b_read_on.txt",
+    "c_incunabula.txt",
+    "d_tough_choices.txt",
+    "e_so_many_books.txt",
+    "f_libraries_of_the_world.txt"
+  ],
+  "sources": [
+    "b",
+    "c",
+    "d",
+    "e",
+    "f",
+    "bc",
+    "bd",
+    "be",
+    "bf",
+    "cd",
+    "ce",
+    "cf",
+    "de",
+    "df",
+    "ef"
+  ],
+  "tightness_levels": [
+    0.08,
+    0.12,
+    0.2
+  ]
+}

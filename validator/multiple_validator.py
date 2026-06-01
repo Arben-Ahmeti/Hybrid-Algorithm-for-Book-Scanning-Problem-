@@ -5,46 +5,48 @@ from validator.validator import validate_solution
 def validate_all_solutions(input_dir='input', output_dir='output'):
     print("\n=== Validating All Solutions ===")
 
-    # Get all input files
-    input_files = [f for f in os.listdir(input_dir) if f.endswith('.txt')]
-
+    input_files = discover_input_files(input_dir)
     if not input_files:
         print(f"No input files found in {input_dir}")
-        return
+        return False
 
-    # Track validation results
     valid_count = 0
     invalid_count = 0
 
-    # Validate each input/output pair
-    for input_file in input_files:
-        input_path = os.path.join(input_dir, input_file)
-        output_path = os.path.join(output_dir, input_file)
+    for input_path in input_files:
+        relative_path = os.path.relpath(input_path, input_dir)
+        output_path = os.path.join(output_dir, relative_path)
 
-        print(f"\nValidating {input_file}...")
-
-        # Check if output file exists
+        print(f"\nValidating {relative_path}...")
         if not os.path.exists(output_path):
-            print(f"  ✗ No output file found")
+            print("  Missing output file")
             invalid_count += 1
             continue
 
-        # Validate the solution
         result = validate_solution(input_path, output_path, isConsoleApplication=True)
         if result == "Valid":
-            print(f"  ✓ Valid")
+            print("  Valid")
             valid_count += 1
         else:
-            print(f"  ✗ Invalid")
+            print("  Invalid")
             invalid_count += 1
 
-    # Print summary
     print("\n=== Validation Summary ===")
     print(f"Total files checked: {len(input_files)}")
     print(f"Valid solutions: {valid_count}")
     print(f"Invalid solutions: {invalid_count}")
 
     return valid_count == len(input_files)
+
+
+def discover_input_files(input_dir):
+    input_files = []
+    for root, dirs, files in os.walk(input_dir):
+        dirs.sort()
+        for name in sorted(files):
+            if name.endswith('.txt'):
+                input_files.append(os.path.join(root, name))
+    return input_files
 
 
 if __name__ == "__main__":

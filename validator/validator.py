@@ -1,8 +1,28 @@
 import sys
 import os
-from PyQt6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QPushButton, QLabel, QFileDialog, QTextEdit, QSpacerItem, QSizePolicy
-)
+
+try:
+    from PyQt6.QtWidgets import (
+        QApplication,
+        QWidget,
+        QVBoxLayout,
+        QPushButton,
+        QLabel,
+        QFileDialog,
+        QTextEdit,
+        QSpacerItem,
+        QSizePolicy,
+    )
+except ModuleNotFoundError:
+    QApplication = None
+    QWidget = object
+    QVBoxLayout = None
+    QPushButton = None
+    QLabel = None
+    QFileDialog = None
+    QTextEdit = None
+    QSpacerItem = None
+    QSizePolicy = None
 
 
 def read_input_file(input_path):
@@ -260,6 +280,9 @@ def main():
         result = validate_solution(input_path, output_path, True)
         print(result)
     else:
+        if QApplication is None:
+            print("PyQt6 is required for the validator UI. Install requirements or pass input/output paths for console validation.")
+            sys.exit(1)
         app = QApplication(sys.argv)
         validator = ValidatorApp()
         validator.show()
